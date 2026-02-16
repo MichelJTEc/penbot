@@ -6,7 +6,6 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 import logging
 import os
-import json
 from pathlib import Path
 
 from config.settings import EMOJI, MESSAGES, ADMIN_USER_IDS, BAKERY_NAME
@@ -32,10 +31,6 @@ AWAITING_ADDRESS = 'awaiting_address'
 AWAITING_PHONE = 'awaiting_phone'
 AWAITING_NOTES = 'awaiting_notes'
 AI_MODE = 'ai_mode'
-AWAITING_ADMIN_PASSWORD = 'awaiting_admin_password'
-
-# Contraseña para comando /nuevos
-ADMIN_PASSWORD = "geov@nny2026"
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,80 +112,6 @@ async def orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
-async def nuevos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /nuevos - Muestra pedidos pendientes (requiere contraseña)"""
-    context.user_data['mode'] = AWAITING_ADMIN_PASSWORD
-    
-    text = "🔐 *Acceso a Pedidos Nuevos*\n\n"
-    text += "Por favor, ingresa la contraseña:"
-    
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-
-
-async def show_new_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra los pedidos nuevos/pendientes"""
-    try:
-        import sqlite3
-        conn = sqlite3.connect(order_manager.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM orders 
-            WHERE status IN ('pending', 'confirmed')
-            ORDER BY created_at DESC
-        """)
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
-        if not rows:
-            text = "📭 *No hay pedidos nuevos*\n\n"
-            text += "Todos los pedidos han sido procesados."
-            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-            return
-        
-        text = f"🔔 *PEDIDOS NUEVOS* ({len(rows)})\n\n"
-        
-        for row in rows:
-            items = json.loads(row['items'])
-            
-            text += f"━━━━━━━━━━━━━━━━━━━━\n"
-            text += f"📋 *Pedido #{row['id']}*\n"
-            text += f"👤 Usuario: {row['username'] if row['username'] else 'Anónimo'}\n"
-            text += f"💰 Total: *${row['total']:.2f} USD*\n"
-            text += f"📅 Fecha: {row['created_at']}\n\n"
-            
-            text += "🎂 *Productos:*\n"
-            for item in items:
-                text += f"• {item['quantity']}x {item['name']}\n"
-            
-            text += f"\n📞 Teléfono: {row['phone'] if row['phone'] else 'No proporcionado'}\n"
-            
-            if row['delivery_type'] == 'delivery':
-                text += f"🚚 Entrega a domicilio\n"
-                text += f"📍 {row['delivery_address'] if row['delivery_address'] else 'No especificada'}\n"
-            else:
-                text += "🏪 Recoger en tienda\n"
-            
-            if row['notes']:
-                text += f"📝 Notas: {row['notes']}\n"
-            
-            text += f"\n⚠️ Estado: *{row['status']}*\n\n"
-        
-        text += "━━━━━━━━━━━━━━━━━━━━\n"
-        text += f"\n✅ Total de pedidos: *{len(rows)}*"
-        
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-        
-    except Exception as e:
-        logger.error(f"Error mostrando pedidos nuevos: {e}")
-        await update.message.reply_text(
-            "❌ Error al cargar los pedidos. Intenta de nuevo.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-
 async def ai_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Activa el modo de conversación con IA"""
     context.user_data['mode'] = AI_MODE
@@ -221,20 +142,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja mensajes de texto del usuario"""
     text = update.message.text
     user_id = update.effective_user.id
-    
-    # Si está esperando contraseña de admin
-    if context.user_data.get('mode') == AWAITING_ADMIN_PASSWORD:
-        if text == ADMIN_PASSWORD:
-            context.user_data['mode'] = None
-            await update.message.reply_text("✅ Contraseña correcta. Cargando pedidos...")
-            await show_new_orders(update, context)
-        else:
-            context.user_data['mode'] = None
-            await update.message.reply_text(
-                "❌ Contraseña incorrecta. Acceso denegado.",
-                reply_markup=get_main_menu_keyboard()
-            )
-        return
     
     # Si está en modo IA, procesar con el asistente
     if context.user_data.get('mode') == AI_MODE:
