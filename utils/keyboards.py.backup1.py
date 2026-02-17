@@ -10,7 +10,7 @@ def get_main_menu_keyboard():
     """Teclado del menú principal"""
     keyboard = [
         [KeyboardButton(f"{EMOJI['bread']} Ver Menú"), KeyboardButton(f"{EMOJI['cart']} Mi Carrito")],
-        [KeyboardButton(f"📋 Mis Pedidos")],
+        [KeyboardButton(f"{EMOJI['robot']} Hablar con IA"), KeyboardButton(f"📋 Mis Pedidos")],
         [KeyboardButton(f"{EMOJI['info']} Ayuda"), KeyboardButton(f"{EMOJI['phone']} Contacto")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)

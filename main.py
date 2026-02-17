@@ -22,9 +22,6 @@ from bot.handlers import (
     menu_command,
     cart_command,
     orders_command,
-    nuevos_command,
-    ai_mode_command,
-    exit_ai_mode,
     admin_command,
     handle_message,
     handle_callback,
@@ -64,11 +61,6 @@ def main():
         application.add_handler(CommandHandler("cart", cart_command))
         application.add_handler(CommandHandler("pedidos", orders_command))
         application.add_handler(CommandHandler("orders", orders_command))
-        application.add_handler(CommandHandler("nuevos", nuevos_command))
-        application.add_handler(CommandHandler("ia", ai_mode_command))
-        application.add_handler(CommandHandler("ai", ai_mode_command))
-        application.add_handler(CommandHandler("salir", exit_ai_mode))
-        application.add_handler(CommandHandler("exit", exit_ai_mode))
         application.add_handler(CommandHandler("admin", admin_command))
         
         # Registrar handler de callbacks (botones)

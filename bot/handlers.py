@@ -6,7 +6,6 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 import logging
 import os
-import json
 from pathlib import Path
 
 from config.settings import EMOJI, MESSAGES, ADMIN_USER_IDS, BAKERY_NAME
@@ -32,10 +31,6 @@ AWAITING_ADDRESS = 'awaiting_address'
 AWAITING_PHONE = 'awaiting_phone'
 AWAITING_NOTES = 'awaiting_notes'
 AI_MODE = 'ai_mode'
-AWAITING_ADMIN_PASSWORD = 'awaiting_admin_password'
-
-# Contraseña para comando /nuevos
-ADMIN_PASSWORD = "geov@nny2026"
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,80 +112,6 @@ async def orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
-async def nuevos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /nuevos - Muestra pedidos pendientes (requiere contraseña)"""
-    context.user_data['mode'] = AWAITING_ADMIN_PASSWORD
-    
-    text = "🔐 *Acceso a Pedidos Nuevos*\n\n"
-    text += "Por favor, ingresa la contraseña:"
-    
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-
-
-async def show_new_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra los pedidos nuevos/pendientes"""
-    try:
-        import sqlite3
-        conn = sqlite3.connect(order_manager.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM orders 
-            WHERE status IN ('pending', 'confirmed')
-            ORDER BY created_at DESC
-        """)
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
-        if not rows:
-            text = "📭 *No hay pedidos nuevos*\n\n"
-            text += "Todos los pedidos han sido procesados."
-            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-            return
-        
-        text = f"🔔 *PEDIDOS NUEVOS* ({len(rows)})\n\n"
-        
-        for row in rows:
-            items = json.loads(row['items'])
-            
-            text += f"━━━━━━━━━━━━━━━━━━━━\n"
-            text += f"📋 *Pedido #{row['id']}*\n"
-            text += f"👤 Usuario: {row['username'] if row['username'] else 'Anónimo'}\n"
-            text += f"💰 Total: *${row['total']:.2f} USD*\n"
-            text += f"📅 Fecha: {row['created_at']}\n\n"
-            
-            text += "🎂 *Productos:*\n"
-            for item in items:
-                text += f"• {item['quantity']}x {item['name']}\n"
-            
-            text += f"\n📞 Teléfono: {row['phone'] if row['phone'] else 'No proporcionado'}\n"
-            
-            if row['delivery_type'] == 'delivery':
-                text += f"🚚 Entrega a domicilio\n"
-                text += f"📍 {row['delivery_address'] if row['delivery_address'] else 'No especificada'}\n"
-            else:
-                text += "🏪 Recoger en tienda\n"
-            
-            if row['notes']:
-                text += f"📝 Notas: {row['notes']}\n"
-            
-            text += f"\n⚠️ Estado: *{row['status']}*\n\n"
-        
-        text += "━━━━━━━━━━━━━━━━━━━━\n"
-        text += f"\n✅ Total de pedidos: *{len(rows)}*"
-        
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-        
-    except Exception as e:
-        logger.error(f"Error mostrando pedidos nuevos: {e}")
-        await update.message.reply_text(
-            "❌ Error al cargar los pedidos. Intenta de nuevo.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-
-
 async def ai_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Activa el modo de conversación con IA"""
     context.user_data['mode'] = AI_MODE
@@ -218,28 +139,11 @@ async def exit_ai_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Maneja mensajes de texto del usuario"""
+    """Maneja mensajes de texto del usuario - AGENTE IA CONVERSACIONAL"""
     text = update.message.text
     user_id = update.effective_user.id
     
-    # Si está esperando contraseña de admin
-    if context.user_data.get('mode') == AWAITING_ADMIN_PASSWORD:
-        if text == ADMIN_PASSWORD:
-            context.user_data['mode'] = None
-            await update.message.reply_text("✅ Contraseña correcta. Cargando pedidos...")
-            await show_new_orders(update, context)
-        else:
-            context.user_data['mode'] = None
-            await update.message.reply_text(
-                "❌ Contraseña incorrecta. Acceso denegado.",
-                reply_markup=get_main_menu_keyboard()
-            )
-        return
-    
-    # Si está en modo IA, procesar con el asistente
-    if context.user_data.get('mode') == AI_MODE:
-        await handle_ai_message(update, context)
-        return
+    # === PRIORIDAD 1: Estados especiales (no interrumpir flujos) ===
     
     # Si está esperando dirección
     if context.user_data.get('state') == AWAITING_ADDRESS:
@@ -271,22 +175,114 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_order_summary(update, context)
         return
     
-    # Manejar botones del teclado principal
+    # === PRIORIDAD 2: Botones del menú principal ===
+    
     if f"{EMOJI['bread']} Ver Menú" in text:
         await menu_command(update, context)
-    elif f"{EMOJI['cart']} Mi Carrito" in text:
+        return
+    
+    if f"{EMOJI['cart']} Mi Carrito" in text:
         await cart_command(update, context)
-    elif f"{EMOJI['robot']} Hablar con IA" in text:
-        await ai_mode_command(update, context)
-    elif "📋 Mis Pedidos" in text:
+        return
+    
+    if "📋 Mis Pedidos" in text:
         await orders_command(update, context)
-    elif f"{EMOJI['info']} Ayuda" in text:
+        return
+    
+    if f"{EMOJI['info']} Ayuda" in text:
         await help_command(update, context)
-    elif f"{EMOJI['phone']} Contacto" in text:
+        return
+    
+    if f"{EMOJI['phone']} Contacto" in text:
         await contact_command(update, context)
-    else:
-        # Búsqueda de productos o consulta general
-        await handle_search(update, context, text)
+        return
+    
+    # === PRIORIDAD 3: AGENTE IA - Analizar intención ===
+    
+    try:
+        # Mostrar indicador de escritura
+        await update.message.chat.send_action("typing")
+        
+        # Detectar intención con IA
+        intention_data = await bakery_ai.detect_intention(text)
+        intention = intention_data.get('intention', 'chat')
+        search_term = intention_data.get('search_term')
+        
+        logger.info(f"Usuario {user_id}: '{text}' → Intención: {intention}")
+        
+        # Ejecutar acción según intención
+        
+        if intention == 'view_menu':
+            # Usuario quiere ver el menú
+            await update.message.reply_text("¡Claro! Te muestro nuestro menú 🎂")
+            await menu_command(update, context)
+        
+        elif intention == 'view_cart':
+            # Usuario quiere ver su carrito
+            await cart_command(update, context)
+        
+        elif intention == 'search_product':
+            # Usuario busca un producto - responder con IA + mostrar botones
+            
+            # Primero responder conversacionalmente con IA
+            response = await bakery_ai.process_message(user_id, text)
+            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
+            
+            # Luego mostrar categorías para que navegue
+            await update.message.reply_text(
+                "👇 Explora nuestros productos:",
+                reply_markup=get_categories_keyboard()
+            )
+        
+        elif intention == 'ask_price':
+            # Pregunta por precio
+            cart = context.user_data.get('cart', {})
+            
+            if cart:
+                # Tiene carrito, mostrar total
+                await cart_command(update, context)
+            else:
+                # No tiene carrito, responder con IA
+                response = await bakery_ai.process_message(user_id, text)
+                await update.message.reply_text(response, parse_mode=ParseMode.HTML)
+        
+        elif intention == 'help':
+            # Necesita ayuda
+            await help_command(update, context)
+        
+        elif intention == 'order':
+            # Quiere hacer un pedido
+            cart = context.user_data.get('cart', {})
+            
+            if cart:
+                # Tiene items, mostrar carrito para confirmar
+                await update.message.reply_text("¡Perfecto! Aquí está tu carrito 🛒")
+                await cart_command(update, context)
+            else:
+                # No tiene items
+                await update.message.reply_text(
+                    "¡Genial! ¿Qué te gustaría ordenar? 😊\n\n"
+                    "Puedes decirme qué buscas o ver el menú completo.",
+                    reply_markup=get_categories_keyboard(),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        
+        else:  # intention == 'chat'
+            # Conversación general
+            response = await bakery_ai.process_message(user_id, text)
+            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
+    
+    except Exception as e:
+        logger.error(f"Error en agente IA: {e}")
+        # Fallback: responder con IA directamente
+        try:
+            response = await bakery_ai.process_message(user_id, text)
+            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
+        except:
+            await update.message.reply_text(
+                "Disculpa, tuve un problema procesando tu mensaje. "
+                "¿Podrías intentar de nuevo o usar los botones del menú?"
+            )
 
 
 async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -300,7 +296,7 @@ async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Procesar con IA
     response = await bakery_ai.process_message(user_id, user_message)
     
-    await update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(response, parse_mode=ParseMode.HTML)
 
 
 async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE, query: str):
