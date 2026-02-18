@@ -10,7 +10,7 @@ def get_main_menu_keyboard():
     """Teclado del menú principal"""
     keyboard = [
         [KeyboardButton(f"{EMOJI['bread']} Ver Menú"), KeyboardButton(f"{EMOJI['cart']} Mi Carrito")],
-        [KeyboardButton(f"📋 Mis Pedidos")],
+        [KeyboardButton(f"{EMOJI['robot']} Hablar con IA"), KeyboardButton(f"📋 Mis Pedidos")],
         [KeyboardButton(f"{EMOJI['info']} Ayuda"), KeyboardButton(f"{EMOJI['phone']} Contacto")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -198,6 +198,32 @@ def get_admin_keyboard():
         [InlineKeyboardButton("📋 Pedidos Pendientes", callback_data="admin_pending")],
         [InlineKeyboardButton("📊 Estadísticas", callback_data="admin_stats")],
         [InlineKeyboardButton("🔙 Menú Principal", callback_data="main_menu")]
+    ]
+    
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_gestion_pedidos_keyboard():
+    """Teclado para gestión de pedidos (/pedidos)"""
+    keyboard = [
+        [InlineKeyboardButton("⏳ Pendientes", callback_data="gestion_pendientes")],
+        [InlineKeyboardButton("✅ Despachar", callback_data="gestion_despachar")],
+        [InlineKeyboardButton("🎉 Despachados", callback_data="gestion_despachados")],
+        [InlineKeyboardButton("📊 Historial", callback_data="gestion_historial")],
+        [InlineKeyboardButton("🔙 Cerrar", callback_data="gestion_cerrar")]
+    ]
+    
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_pedido_actions_keyboard(order_id):
+    """Teclado con acciones para un pedido específico"""
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Despachar", callback_data=f"action_despachar_{order_id}"),
+            InlineKeyboardButton("❌ Cancelar", callback_data=f"action_cancelar_{order_id}")
+        ],
+        [InlineKeyboardButton("🔙 Volver", callback_data="gestion_pendientes")]
     ]
     
     return InlineKeyboardMarkup(keyboard)

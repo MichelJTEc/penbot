@@ -146,7 +146,34 @@ Tú: "¡Con gusto te cuento! 😊 Los precios varían según el tamaño y ocasi�
 - No inventas productos que no existen
 - Si no sabes algo, ofrece: "Te comunico con nuestra tienda para más detalles"
 
-Ahora atiende al cliente con calidez, inteligencia y entusiasmo. ¡Cada torta es una celebración! 🎉"""
+Ahora atiende al cliente con calidez, inteligencia y entusiasmo. ¡Cada torta es una celebración! 🎉
+
+═══════════════════════════════════
+⚡ SISTEMA DE ACCIONES (MUY IMPORTANTE)
+═══════════════════════════════════
+
+Al final de tu respuesta, incluye UNA etiqueta de acción cuando aplique:
+
+- Si el cliente quiere ver el menú/productos → agrega: [ACCION:ver_menu]
+- Si el cliente quiere ver su carrito → agrega: [ACCION:ver_carrito]
+- Si el cliente necesita ayuda/contacto → agrega: [ACCION:ver_ayuda]
+- Si es conversación normal → NO agregues etiqueta
+
+Ejemplos:
+Cliente: "quiero ver el menú"
+Tú: "¡Con gusto! Aquí están todas nuestras opciones 🎂 [ACCION:ver_menu]"
+
+Cliente: "qué tengo en mi carrito?"
+Tú: "¡Claro! Te muestro lo que tienes 🛒 [ACCION:ver_carrito]"
+
+Cliente: "tienen tortas de chocolate?"
+Tú: "¡Sí! Tenemos opciones deliciosas con chocolate... [ACCION:ver_menu]"
+
+Cliente: "hola buenas noches"
+Tú: "¡Buenas noches! Bienvenido a La Viña Dulce 🎂 ¿En qué te puedo ayudar?"
+(sin etiqueta porque es saludo)
+
+La etiqueta va siempre AL FINAL, pegada al texto, sin espacio extra."""
 
         return prompt
     
@@ -164,7 +191,11 @@ Ahora atiende al cliente con calidez, inteligencia y entusiasmo. ¡Cada torta es
             del self.chat_sessions[user_id]
     
     async def process_message(self, user_id, message):
-        """Procesa un mensaje del usuario usando IA"""
+        """
+        UNA SOLA LLAMADA a Gemini que responde Y decide la acción.
+        La IA incluye etiquetas especiales en su respuesta:
+        [ACCION:ver_menu], [ACCION:ver_carrito], [ACCION:ver_ayuda]
+        """
         try:
             chat = self.get_or_create_session(user_id)
             
@@ -176,12 +207,11 @@ Ahora atiende al cliente con calidez, inteligencia y entusiasmo. ¡Cada torta es
             
             logger.info(f"Usuario {user_id}: {message}")
             
-            # Llamada asíncrona
+            # UNA SOLA llamada asíncrona
             response = await chat.send_message_async(full_message)
-            
             ai_response = response.text
             
-            # Limpiar cualquier markdown que Gemini pueda agregar por hábito
+            # Limpiar markdown que Gemini pueda agregar por hábito
             ai_response = ai_response.replace('**', '').replace('__', '')
             
             logger.info(f"IA responde a {user_id}: {ai_response[:100]}...")
@@ -194,71 +224,29 @@ Ahora atiende al cliente con calidez, inteligencia y entusiasmo. ¡Cada torta es
             
             if "429" in error_msg:
                 return "Estoy recibiendo muchas consultas en este momento. ¡Intenta en un minuto! ⏳"
-            
             if "404" in error_msg or "not found" in error_msg.lower():
                 return "Disculpa, hay un problema técnico. Por favor contáctanos directamente. 🚫"
-            
             if "leaked" in error_msg or "403" in error_msg:
                 return "Disculpa, hay un problema con mi configuración. Por favor contacta a la tienda. 🔧"
             
-            return f"Disculpa, tuve un pequeño problema. ¿Podrías intentar de nuevo? 😊"
+            return "Disculpa, tuve un pequeño problema. ¿Podrías intentar de nuevo? 😊"
     
-    async def detect_intention(self, message):
+    def extract_action(self, ai_response):
         """
-        Detecta la intención del usuario usando Gemini
-        Retorna un diccionario con la intención detectada
+        Extrae la etiqueta de acción del texto de la IA (si existe)
+        y devuelve (texto_limpio, accion)
         """
-        try:
-            # Detección simple por palabras clave primero
-            message_lower = message.lower()
-            
-            # Palabras clave para detección rápida
-            if any(word in message_lower for word in ['menú', 'menu', 'productos', 'qué tienen', 'que tienen', 'mostrar', 'ver']):
-                if 'carrito' not in message_lower:
-                    return {"intention": "view_menu", "confidence": 0.9, "search_term": None}
-            
-            if any(word in message_lower for word in ['carrito', 'pedido actual', 'qué tengo', 'que tengo', 'cuánto llevo']):
-                return {"intention": "view_cart", "confidence": 0.9, "search_term": None}
-            
-            if any(word in message_lower for word in ['precio', 'cuesta', 'cuánto', 'cuanto', 'vale']):
-                return {"intention": "ask_price", "confidence": 0.8, "search_term": None}
-            
-            if any(word in message_lower for word in ['ayuda', 'horario', 'ubicación', 'ubicacion', 'dónde', 'donde', 'dirección']):
-                return {"intention": "help", "confidence": 0.9, "search_term": None}
-            
-            if any(word in message_lower for word in ['ordenar', 'pedir', 'comprar', 'quiero hacer']):
-                return {"intention": "order", "confidence": 0.8, "search_term": None}
-            
-            # Si menciona productos específicos, es búsqueda
-            productos = ['chocolate', 'vainilla', 'torta', '15 años', 'bautizo', 'matrimonio', 'comunión']
-            if any(prod in message_lower for prod in productos):
-                # Extraer término de búsqueda
-                for prod in productos:
-                    if prod in message_lower:
-                        return {"intention": "search_product", "confidence": 0.8, "search_term": prod}
-            
-            # Si no coincide con nada, usar IA para analizar
-            prompt = f"""Analiza: "{message}"
-
-Responde SOLO con un JSON (sin markdown):
-{{"intention": "view_menu|view_cart|search_product|ask_price|help|order|chat", "search_term": null}}"""
-
-            response = await self.model.generate_content_async(prompt)
-            text = response.text.strip().replace('```json', '').replace('```', '').strip()
-            
-            result = json.loads(text)
-            logger.info(f"IA detectó: {result.get('intention')}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error en detect_intention: {e}")
-            # Fallback seguro: conversación general
-            return {
-                "intention": "chat",
-                "confidence": 0.5,
-                "search_term": None,
-                "context": "fallback"
-            }
+        import re
+        
+        action = None
+        clean_text = ai_response
+        
+        match = re.search(r'\[ACCION:(\w+)\]', ai_response)
+        if match:
+            action = match.group(1)
+            clean_text = re.sub(r'\[ACCION:\w+\]\s*', '', ai_response).strip()
+        
+        return clean_text, action
 
 # Instancia global
 bakery_ai = BakeryAI()

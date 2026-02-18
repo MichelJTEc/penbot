@@ -22,6 +22,7 @@ from bot.handlers import (
     menu_command,
     cart_command,
     orders_command,
+    gestion_command,
     admin_command,
     handle_message,
     handle_callback,
@@ -61,6 +62,7 @@ def main():
         application.add_handler(CommandHandler("cart", cart_command))
         application.add_handler(CommandHandler("pedidos", orders_command))
         application.add_handler(CommandHandler("orders", orders_command))
+        application.add_handler(CommandHandler("gestion", gestion_command))
         application.add_handler(CommandHandler("admin", admin_command))
         
         # Registrar handler de callbacks (botones)

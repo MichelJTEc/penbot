@@ -20,8 +20,15 @@ from utils.keyboards import (
     get_products_keyboard, get_product_detail_keyboard,
     get_cart_keyboard, get_delivery_type_keyboard,
     get_time_slots_keyboard, get_confirm_order_keyboard,
-    get_quantity_keyboard, get_admin_keyboard
+    get_quantity_keyboard, get_admin_keyboard,
+    get_gestion_pedidos_keyboard
 )
+
+
+def is_telegram_duplicate_error(error):
+    """Verifica si el error es de mensaje duplicado de Telegram"""
+    error_str = str(error)
+    return "Message is not modified" in error_str or "message is not modified" in error_str
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,6 +38,10 @@ AWAITING_ADDRESS = 'awaiting_address'
 AWAITING_PHONE = 'awaiting_phone'
 AWAITING_NOTES = 'awaiting_notes'
 AI_MODE = 'ai_mode'
+AWAITING_ADMIN_PASSWORD = 'awaiting_admin_password'
+
+# Contraseña para gestión de pedidos
+ADMIN_PASSWORD = "geov@nny2026"
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -90,7 +101,7 @@ async def cart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /pedidos - Muestra historial de pedidos"""
+    """Comando /pedidos - Muestra historial de pedidos del cliente"""
     user_id = update.effective_user.id
     orders = order_manager.get_user_orders(user_id, limit=5)
     
@@ -110,6 +121,40 @@ async def orders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "Usa /pedido [número] para ver detalles"
     
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+
+async def gestion_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /gestion - Gestión de pedidos (SOLO ADMINS)"""
+    user_id = update.effective_user.id
+    
+    # Verificar que sea admin
+    if user_id not in ADMIN_USER_IDS:
+        await update.message.reply_text(
+            "❌ Este comando es solo para administradores.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Pedir contraseña
+    context.user_data['mode'] = AWAITING_ADMIN_PASSWORD
+    context.user_data['admin_action'] = 'gestion_pedidos'
+    
+    text = "🔐 *Gestión de Pedidos*\n\n"
+    text += "Por favor, ingresa la contraseña:"
+    
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+
+async def show_gestion_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra el menú de gestión de pedidos"""
+    text = "📋 *GESTIÓN DE PEDIDOS*\n\n"
+    text += "Selecciona una opción:"
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=get_gestion_pedidos_keyboard(),
+        parse_mode=ParseMode.MARKDOWN
+    )
 
 
 async def ai_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,6 +189,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     # === PRIORIDAD 1: Estados especiales (no interrumpir flujos) ===
+    
+    # Si está esperando contraseña de admin
+    if context.user_data.get('mode') == AWAITING_ADMIN_PASSWORD:
+        if text == ADMIN_PASSWORD:
+            context.user_data['mode'] = None
+            
+            # Ver qué acción solicitó el admin
+            action = context.user_data.get('admin_action', 'gestion_pedidos')
+            
+            if action == 'gestion_pedidos':
+                # Mostrar menú de gestión
+                await show_gestion_menu(update, context)
+            else:
+                await update.message.reply_text("✅ Contraseña correcta.")
+        else:
+            context.user_data['mode'] = None
+            await update.message.reply_text(
+                "❌ Contraseña incorrecta. Acceso denegado.",
+                reply_markup=get_main_menu_keyboard()
+            )
+        return
     
     # Si está esperando dirección
     if context.user_data.get('state') == AWAITING_ADDRESS:
@@ -197,92 +263,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await contact_command(update, context)
         return
     
-    # === PRIORIDAD 3: AGENTE IA - Analizar intención ===
+    # === PRIORIDAD 3: AGENTE IA - UNA SOLA LLAMADA ===
     
     try:
         # Mostrar indicador de escritura
         await update.message.chat.send_action("typing")
         
-        # Detectar intención con IA
-        intention_data = await bakery_ai.detect_intention(text)
-        intention = intention_data.get('intention', 'chat')
-        search_term = intention_data.get('search_term')
+        # UNA SOLA llamada a Gemini - responde Y decide la acción
+        raw_response = await bakery_ai.process_message(user_id, text)
         
-        logger.info(f"Usuario {user_id}: '{text}' → Intención: {intention}")
+        # Extraer acción del texto si la IA incluyó una etiqueta
+        clean_text, action = bakery_ai.extract_action(raw_response)
         
-        # Ejecutar acción según intención
+        logger.info(f"Usuario {user_id}: '{text}' → Acción: {action or 'ninguna'}")
         
-        if intention == 'view_menu':
-            # Usuario quiere ver el menú
-            await update.message.reply_text("¡Claro! Te muestro nuestro menú 🎂")
+        # Enviar respuesta conversacional de la IA
+        if clean_text:
+            await update.message.reply_text(clean_text, parse_mode=ParseMode.HTML)
+        
+        # Ejecutar acción adicional si la IA lo indicó
+        if action == 'ver_menu':
             await menu_command(update, context)
         
-        elif intention == 'view_cart':
-            # Usuario quiere ver su carrito
+        elif action == 'ver_carrito':
             await cart_command(update, context)
         
-        elif intention == 'search_product':
-            # Usuario busca un producto - responder con IA + mostrar botones
-            
-            # Primero responder conversacionalmente con IA
-            response = await bakery_ai.process_message(user_id, text)
-            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
-            
-            # Luego mostrar categorías para que navegue
-            await update.message.reply_text(
-                "👇 Explora nuestros productos:",
-                reply_markup=get_categories_keyboard()
-            )
-        
-        elif intention == 'ask_price':
-            # Pregunta por precio
-            cart = context.user_data.get('cart', {})
-            
-            if cart:
-                # Tiene carrito, mostrar total
-                await cart_command(update, context)
-            else:
-                # No tiene carrito, responder con IA
-                response = await bakery_ai.process_message(user_id, text)
-                await update.message.reply_text(response, parse_mode=ParseMode.HTML)
-        
-        elif intention == 'help':
-            # Necesita ayuda
+        elif action == 'ver_ayuda':
             await help_command(update, context)
-        
-        elif intention == 'order':
-            # Quiere hacer un pedido
-            cart = context.user_data.get('cart', {})
-            
-            if cart:
-                # Tiene items, mostrar carrito para confirmar
-                await update.message.reply_text("¡Perfecto! Aquí está tu carrito 🛒")
-                await cart_command(update, context)
-            else:
-                # No tiene items
-                await update.message.reply_text(
-                    "¡Genial! ¿Qué te gustaría ordenar? 😊\n\n"
-                    "Puedes decirme qué buscas o ver el menú completo.",
-                    reply_markup=get_categories_keyboard(),
-                    parse_mode=ParseMode.MARKDOWN
-                )
-        
-        else:  # intention == 'chat'
-            # Conversación general
-            response = await bakery_ai.process_message(user_id, text)
-            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
     
     except Exception as e:
         logger.error(f"Error en agente IA: {e}")
-        # Fallback: responder con IA directamente
-        try:
-            response = await bakery_ai.process_message(user_id, text)
-            await update.message.reply_text(response, parse_mode=ParseMode.HTML)
-        except:
-            await update.message.reply_text(
-                "Disculpa, tuve un problema procesando tu mensaje. "
-                "¿Podrías intentar de nuevo o usar los botones del menú?"
-            )
+        await update.message.reply_text(
+            "Disculpa, tuve un pequeño problema. "
+            "¿Podrías intentar de nuevo o usar los botones del menú? 😊"
+        )
 
 
 async def handle_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -329,7 +343,117 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = update.effective_user.id
     
-    # Categorías
+    # === CALLBACKS DEL MENÚ DE GESTIÓN ===
+    
+    if data == 'gestion_cerrar':
+        await query.delete_message()
+        return
+    
+    elif data.startswith('gestion_'):
+        # Importar lo necesario
+        import sqlite3
+        from utils.keyboards import get_pedido_actions_keyboard
+        
+        if data == 'gestion_pendientes':
+            # Ver pendientes
+            try:
+                conn = sqlite3.connect(order_manager.db_path)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM orders WHERE status IN ('pending', 'confirmed') ORDER BY created_at DESC")
+                rows = cursor.fetchall()
+                conn.close()
+                
+                if not rows:
+                    await query.edit_message_text("📭 *No hay pedidos pendientes*", parse_mode=ParseMode.MARKDOWN, reply_markup=get_gestion_pedidos_keyboard())
+                    return
+                
+                row = rows[0]
+                items = json.loads(row['items'])
+                text = f"⏳ *PEDIDOS PENDIENTES* ({len(rows)})\n\n"
+                text += f"━━━━━━━━━━━━━━━━━━━━\n"
+                text += f"📋 *Pedido #{row['id']}*\n"
+                text += f"💰 ${row['total']:.2f} USD\n"
+                text += f"👤 {row['username'] or 'Anónimo'}\n"
+                text += f"📞 {row['phone'] or 'No proporcionado'}\n\n"
+                text += "🎂 *Productos:*\n"
+                for item in items:
+                    text += f"• {item['quantity']}x {item['name']}\n"
+                if row['delivery_type'] == 'delivery':
+                    text += f"\n🚚 Entrega: {row['delivery_address'] or 'No especificada'}\n"
+                else:
+                    text += "\n🏪 Recoger en tienda\n"
+                if row['notes']:
+                    text += f"📝 {row['notes']}\n"
+                text += f"\n📅 {row['created_at']}\n━━━━━━━━━━━━━━━━━━━━"
+                await query.edit_message_text(text, reply_markup=get_pedido_actions_keyboard(row['id']), parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                if not is_telegram_duplicate_error(e): logger.error(f"Error: {e}")
+                await query.edit_message_text("❌ Error")
+        
+        elif data == 'gestion_despachados':
+            try:
+                conn = sqlite3.connect(order_manager.db_path)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM orders WHERE status = 'delivered' ORDER BY created_at DESC LIMIT 20")
+                rows = cursor.fetchall()
+                conn.close()
+                if not rows:
+                    await query.edit_message_text("📭 *No hay despachados*", parse_mode=ParseMode.MARKDOWN, reply_markup=get_gestion_pedidos_keyboard())
+                    return
+                text = "🎉 *DESPACHADOS*\n\n"
+                for row in rows:
+                    text += f"• #{row['id']} - ${row['total']:.2f} - {row['created_at'][:10]} ✓\n"
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_gestion_pedidos_keyboard())
+            except Exception as e:
+                if not is_telegram_duplicate_error(e): logger.error(f"Error: {e}")
+                await query.edit_message_text("❌ Error")
+        
+        elif data == 'gestion_historial':
+            try:
+                conn = sqlite3.connect(order_manager.db_path)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 50")
+                rows = cursor.fetchall()
+                conn.close()
+                if not rows:
+                    await query.edit_message_text("📭 *No hay pedidos*", parse_mode=ParseMode.MARKDOWN, reply_markup=get_gestion_pedidos_keyboard())
+                    return
+                status_emoji = {'pending': '⏳', 'confirmed': '✅', 'preparing': '👨‍🍳', 'ready': '📦', 'delivered': '🎉', 'cancelled': '❌'}
+                text = "📊 *HISTORIAL*\n\n"
+                for row in rows:
+                    emoji = status_emoji.get(row['status'], '❓')
+                    text += f"{emoji} #{row['id']} - ${row['total']:.2f} - {row['status']} - {row['created_at'][:10]}\n"
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=get_gestion_pedidos_keyboard())
+            except Exception as e:
+                if not is_telegram_duplicate_error(e): logger.error(f"Error: {e}")
+                await query.edit_message_text("❌ Error")
+        return
+    
+    elif data.startswith('action_despachar_'):
+        order_id = int(data.replace('action_despachar_', ''))
+        success = order_manager.update_order_status(order_id, 'delivered')
+        if success:
+            await query.edit_message_text(f"✅ *Pedido #{order_id} DESPACHADO*", parse_mode=ParseMode.MARKDOWN, reply_markup=get_gestion_pedidos_keyboard())
+            try:
+                order = order_manager.get_order(order_id)
+                await context.bot.send_message(chat_id=order['user_id'], text=f"🎉 *¡Tu pedido ha sido entregado!*\n\nPedido #{order_id}\n¡Gracias! 💖", parse_mode=ParseMode.MARKDOWN)
+            except:
+                pass
+        return
+    
+    elif data.startswith('action_cancelar_'):
+        order_id = int(data.replace('action_cancelar_', ''))
+        success = order_manager.update_order_status(order_id, 'cancelled')
+        if success:
+            await query.edit_message_text(f"❌ *Pedido #{order_id} CANCELADO*", parse_mode=ParseMode.MARKDOWN, reply_markup=get_gestion_pedidos_keyboard())
+        return
+    
+    # === FIN CALLBACKS GESTIÓN ===
+    
+    # Categorías    # Categorías
     if data.startswith('cat_'):
         category = data.replace('cat_', '')
         emoji = get_category_emoji(category)
